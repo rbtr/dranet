@@ -66,7 +66,8 @@ func (np *NetworkDriver) PublishResources(ctx context.Context) {
 
 			resources := resourceslice.DriverResources{
 				Pools: map[string]resourceslice.Pool{
-					np.nodeName: {Slices: []resourceslice.Slice{{Devices: devices}}}},
+					np.nodeName: {Slices: []resourceslice.Slice{{Devices: devices}}},
+				},
 			}
 			err := np.draPlugin.PublishResources(ctx, resources)
 			if err != nil {
@@ -247,7 +248,9 @@ func (np *NetworkDriver) prepareResourceClaim(ctx context.Context, claim *resour
 			}
 			deviceCfg.RDMADevice = buildRDMAConfig(rdmaDevName, charDevices)
 			for _, uid := range podUIDs {
-				np.podConfigStore.SetDeviceConfig(uid, result.Device, deviceCfg)
+				if err := np.podConfigStore.SetDeviceConfig(uid, result.Device, deviceCfg); err != nil {
+					errorList = append(errorList, fmt.Errorf("failed to persist device config for pod %s device %s: %v", uid, result.Device, err))
+				}
 			}
 			klog.V(4).Infof("IB-only claim resources for pods %v : %#v", podUIDs, deviceCfg)
 			continue
@@ -395,7 +398,9 @@ func (np *NetworkDriver) prepareResourceClaim(ctx context.Context, claim *resour
 		// TODO: support for multiple pods sharing the same device
 		// we'll create the subinterface here
 		for _, uid := range podUIDs {
-			np.podConfigStore.SetDeviceConfig(uid, result.Device, deviceCfg)
+			if err := np.podConfigStore.SetDeviceConfig(uid, result.Device, deviceCfg); err != nil {
+				errorList = append(errorList, fmt.Errorf("failed to persist device config for pod %s device %s: %v", uid, result.Device, err))
+			}
 		}
 		klog.V(4).Infof("Claim Resources for pods %v : %#v", podUIDs, deviceCfg)
 	}

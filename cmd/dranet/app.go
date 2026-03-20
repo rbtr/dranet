@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"reflect"
 	"runtime/debug"
 	"sync/atomic"
@@ -54,6 +55,7 @@ var (
 	kubeconfig       string
 	bindAddress      string
 	celExpression    string
+	dbPath           string
 	minPollInterval  time.Duration
 	maxPollInterval  time.Duration
 	pollBurst        int
@@ -67,6 +69,7 @@ func init() {
 	flag.StringVar(&bindAddress, "bind-address", ":9177", "The IP address and port for the metrics and healthz server to serve on")
 	flag.StringVar(&hostnameOverride, "hostname-override", "", "If non-empty, will be used as the name of the Node that kube-network-policies is running on. If unset, the node name is assumed to be the same as the node's hostname.")
 	flag.StringVar(&celExpression, "filter", `!("dra.net/type" in attributes) || attributes["dra.net/type"].StringValue  != "veth"`, "CEL expression to filter network interface attributes (v1.DeviceAttribute).")
+	flag.StringVar(&dbPath, "db-path", filepath.Join("/var/run/dranet", "dranet.db"), "Path to the persistent bbolt database file. Set to an empty string to disable persistence and use in-memory state.")
 	flag.DurationVar(&minPollInterval, "inventory-min-poll-interval", 2*time.Second, "The minimum interval between two consecutive polls of the inventory.")
 	flag.DurationVar(&maxPollInterval, "inventory-max-poll-interval", 1*time.Minute, "The maximum interval between two consecutive polls of the inventory.")
 	flag.IntVar(&pollBurst, "inventory-poll-burst", 5, "The number of polls that can be run in a burst.")
@@ -141,6 +144,11 @@ func main() {
 	signal.Notify(signalCh, syscall.SIGINT, syscall.SIGTERM)
 
 	opts := []driver.Option{}
+
+	if dbPath != "" {
+		opts = append(opts, driver.WithDBPath(dbPath))
+	}
+
 	if celExpression != "" {
 		env, err := cel.NewEnv(
 			ext.NativeTypes(

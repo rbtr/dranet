@@ -40,21 +40,21 @@ type PodConfig struct {
 // network device allocated to a Pod. This includes network interface settings,
 // routes for the Pod's network namespace, and RDMA configurations.
 type DeviceConfig struct {
-	Claim types.NamespacedName
+	Claim types.NamespacedName `json:"claim"`
 
 	// NetworkInterfaceConfigInHost is the config of the network interface as
 	// seen in the host's network namespace BEFORE it was moved to the pod's
 	// network namespace.
-	NetworkInterfaceConfigInHost apis.NetworkConfig
+	NetworkInterfaceConfigInHost apis.NetworkConfig `json:"networkInterfaceConfigInHost"`
 
 	// NetworkInterfaceConfigInPod contains all network-related configurations
 	// (interface, routes, ethtool, sysctl) to be applied for this device in the
 	// Pod's namespace.
-	NetworkInterfaceConfigInPod apis.NetworkConfig
+	NetworkInterfaceConfigInPod apis.NetworkConfig `json:"networkInterfaceConfigInPod"`
 
 	// RDMADevice holds RDMA-specific configurations if the network device
 	// has associated RDMA capabilities.
-	RDMADevice RDMAConfig
+	RDMADevice RDMAConfig `json:"rdmaDevice,omitempty"`
 }
 
 // RDMAConfig contains parameters for setting up an RDMA device associated
@@ -63,22 +63,22 @@ type RDMAConfig struct {
 	// LinkDev is the name of the RDMA link device (e.g., "mlx5_0").
 	// Depending on the type of device (RoCE, IB) it may have a network device
 	// associated. For IB-only devices there is no associated network interface.
-	LinkDev string
+	LinkDev string `json:"linkDev,omitempty"`
 
 	// DevChars is a list of user-space RDMA character
 	// devices (e.g., "/dev/infiniband/uverbs0", "/dev/infiniband/rdma_cm")
 	// that should be made available to the Pod.
-	DevChars []LinuxDevice
+	DevChars []LinuxDevice `json:"devChars,omitempty"`
 }
 
 type LinuxDevice struct {
-	Path     string
-	Type     string
-	Major    int64
-	Minor    int64
-	FileMode uint32
-	UID      uint32
-	GID      uint32
+	Path     string `json:"path"`
+	Type     string `json:"type"`
+	Major    int64  `json:"major"`
+	Minor    int64  `json:"minor"`
+	FileMode uint32 `json:"fileMode"`
+	UID      uint32 `json:"uid"`
+	GID      uint32 `json:"gid"`
 }
 
 // PodConfigStore provides a thread-safe, centralized store for all network
@@ -88,12 +88,18 @@ type PodConfigStore struct {
 	configs map[types.UID]PodConfig
 }
 
+// Compile-time interface check.
+var _ podConfigStorer = &PodConfigStore{}
+
 // NewPodConfigStore creates and returns a new instance of PodConfigStore.
 func NewPodConfigStore() *PodConfigStore {
 	return &PodConfigStore{
 		configs: make(map[types.UID]PodConfig),
 	}
 }
+
+// Close is a no-op for the in-memory store.
+func (s *PodConfigStore) Close() error { return nil }
 
 // UpdateLastNRIActivity updates the LastNRIActivity timestamp for a given Pod UID.
 // If the PodConfig doesn't exist, it does nothing.
@@ -119,7 +125,7 @@ func (s *PodConfigStore) GetPodNRIActivities() map[types.UID]time.Time {
 
 // SetDeviceConfig stores the configuration for a specific device under a given Pod UID.
 // If a configuration for the Pod UID or device name already exists, it will be overwritten.
-func (s *PodConfigStore) SetDeviceConfig(podUID types.UID, deviceName string, config DeviceConfig) {
+func (s *PodConfigStore) SetDeviceConfig(podUID types.UID, deviceName string, config DeviceConfig) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	podConfig, ok := s.configs[podUID]
@@ -130,6 +136,7 @@ func (s *PodConfigStore) SetDeviceConfig(podUID types.UID, deviceName string, co
 		s.configs[podUID] = podConfig
 	}
 	podConfig.DeviceConfigs[deviceName] = config
+	return nil
 }
 
 // GetDeviceConfig retrieves the configuration for a specific device under a given Pod UID.

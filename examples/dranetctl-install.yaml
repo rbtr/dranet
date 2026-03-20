@@ -135,6 +135,8 @@ spec:
         - name: netns
           mountPath: /var/run/netns
           mountPropagation: HostToContainer
+        - name: dranet-run
+          mountPath: /var/run/dranet
       volumes:
       - name: device-plugin
         hostPath:
@@ -148,6 +150,10 @@ spec:
       - name: netns
         hostPath:
           path: /var/run/netns
+      - name: dranet-run
+        hostPath:
+          path: /var/run/dranet
+          type: DirectoryOrCreate
       - name: etc
         hostPath:
           path: /etc

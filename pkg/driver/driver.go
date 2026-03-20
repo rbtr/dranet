@@ -31,6 +31,7 @@ import (
 	"sigs.k8s.io/dranet/internal/nlwrap"
 
 	resourceapi "k8s.io/api/resource/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
@@ -41,8 +42,7 @@ import (
 )
 
 const (
-	kubeletPluginRegistryPath = "/var/lib/kubelet/plugins_registry"
-	kubeletPluginPath         = "/var/lib/kubelet/plugins"
+	kubeletPluginPath = "/var/lib/kubelet/plugins"
 )
 
 const (
@@ -70,6 +70,19 @@ type inventoryDB interface {
 	GetPodNetNs(podKey string) (netNs string)
 }
 
+// podConfigStorer is the interface for all operations on the pod config store.
+// It is implemented by PodConfigStore (in-memory) and BoltPodConfigStore (persistent).
+type podConfigStorer interface {
+	SetDeviceConfig(podUID types.UID, deviceName string, config DeviceConfig) error
+	GetDeviceConfig(podUID types.UID, deviceName string) (DeviceConfig, bool)
+	GetPodConfig(podUID types.UID) (PodConfig, bool)
+	DeletePod(podUID types.UID)
+	DeleteClaim(claim types.NamespacedName) []types.UID
+	UpdateLastNRIActivity(podUID types.UID, timestamp time.Time)
+	GetPodNRIActivities() map[types.UID]time.Time
+	Close() error
+}
+
 // WithFilter
 func WithFilter(filter cel.Program) Option {
 	return func(o *NetworkDriver) {
@@ -81,6 +94,14 @@ func WithFilter(filter cel.Program) Option {
 func WithInventory(db inventoryDB) Option {
 	return func(o *NetworkDriver) {
 		o.netdb = db
+	}
+}
+
+// WithDBPath sets the path for the persistent pod config database.
+// If not set, an in-memory store is used.
+func WithDBPath(path string) Option {
+	return func(o *NetworkDriver) {
+		o.dbPath = path
 	}
 }
 
@@ -97,7 +118,8 @@ type NetworkDriver struct {
 
 	// Cache the rdma shared mode state
 	rdmaSharedMode bool
-	podConfigStore *PodConfigStore
+	podConfigStore podConfigStorer
+	dbPath         string // path for persistent bbolt database; empty means in-memory
 
 	clock clock.WithTicker // Injectable clock for testing
 }
@@ -120,12 +142,23 @@ func Start(ctx context.Context, driverName string, kubeClient kubernetes.Interfa
 		nodeName:       nodeName,
 		kubeClient:     kubeClient,
 		rdmaSharedMode: rdmaNetnsMode == apis.RdmaNetnsModeShared,
-		podConfigStore: NewPodConfigStore(),
 		clock:          clock.RealClock{},
 	}
 
 	for _, o := range opts {
 		o(plugin)
+	}
+
+	// Initialize the pod config store: persistent (bbolt) if a DB path was
+	// configured, in-memory otherwise.
+	if plugin.dbPath != "" {
+		boltStore, err := NewBoltPodConfigStore(plugin.dbPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to open pod config database at %s: %v", plugin.dbPath, err)
+		}
+		plugin.podConfigStore = boltStore
+	} else {
+		plugin.podConfigStore = NewPodConfigStore()
 	}
 
 	driverPluginPath := filepath.Join(kubeletPluginPath, driverName)
@@ -312,5 +345,11 @@ func (np *NetworkDriver) Stop(ctxCancel context.CancelFunc) {
 	ctxCancel()
 
 	np.nriPlugin.Stop()
+
+	// Close the pod config store.
+	if err := np.podConfigStore.Close(); err != nil {
+		klog.Errorf("Failed to close pod config database: %v", err)
+	}
+
 	klog.Info("Driver stopped.")
 }

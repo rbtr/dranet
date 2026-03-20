@@ -18,12 +18,14 @@ package driver
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/containerd/nri/pkg/api"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/dranet/pkg/apis"
 	"sigs.k8s.io/dranet/pkg/inventory"
 )
 
@@ -65,10 +67,114 @@ func TestCreateContainerNoDuplicateDevices(t *testing.T) {
 	}
 }
 
+func TestCreateContainerUsesPersistedConfigAfterRestart(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "pod_configs.db")
+	podUID := types.UID("test-pod")
+	deviceCfg := DeviceConfig{
+		RDMADevice: RDMAConfig{
+			DevChars: []LinuxDevice{
+				{Path: "/dev/infiniband/uverbs0", Type: "c", Major: 231, Minor: 192},
+			},
+		},
+	}
+
+	// Simulate NodePrepareResource storing config before the driver restarts.
+	storeBeforeRestart, err := NewBoltPodConfigStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewBoltPodConfigStore() error: %v", err)
+	}
+	storeBeforeRestart.SetDeviceConfig(podUID, "eth0", deviceCfg) //nolint:errcheck
+	if err := storeBeforeRestart.Close(); err != nil {
+		t.Fatalf("Close() error: %v", err)
+	}
+
+	storeAfterRestart, err := NewBoltPodConfigStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewBoltPodConfigStore() after restart error: %v", err)
+	}
+	defer storeAfterRestart.Close()
+
+	np := &NetworkDriver{podConfigStore: storeAfterRestart}
+	pod := &api.PodSandbox{Uid: string(podUID), Name: "test-pod", Namespace: "test-ns"}
+	ctr := &api.Container{Name: "test-container"}
+
+	adjust, _, err := np.CreateContainer(context.Background(), pod, ctr)
+	if err != nil {
+		t.Fatalf("CreateContainer failed: %v", err)
+	}
+	if adjust == nil || adjust.Linux == nil {
+		t.Fatalf("CreateContainer returned nil container adjustment")
+	}
+	if len(adjust.Linux.Devices) != 1 {
+		t.Fatalf("expected 1 injected RDMA char device after restart, got %d", len(adjust.Linux.Devices))
+	}
+	if got := adjust.Linux.Devices[0].Path; got != "/dev/infiniband/uverbs0" {
+		t.Fatalf("unexpected injected device path %q", got)
+	}
+}
+
+func TestRunPodSandboxUsesPersistedConfigAfterRestart(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "dranet.db")
+	podUID := types.UID("test-pod-sandbox")
+	deviceCfg := DeviceConfig{
+		Claim: types.NamespacedName{Namespace: "ns", Name: "claim1"},
+		// Set a host interface name so runPodSandbox takes the netdev path,
+		// which will fail (no real interface) — proving the config was found.
+		NetworkInterfaceConfigInHost: apis.NetworkConfig{
+			Interface: apis.InterfaceConfig{Name: "nonexistent0"},
+		},
+		NetworkInterfaceConfigInPod: apis.NetworkConfig{
+			Interface: apis.InterfaceConfig{Name: "eth0-pod"},
+		},
+	}
+
+	// Simulate NodePrepareResource storing config before the driver restarts.
+	storeBeforeRestart, err := NewBoltPodConfigStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewBoltPodConfigStore() error: %v", err)
+	}
+	if err := storeBeforeRestart.SetDeviceConfig(podUID, "eth0", deviceCfg); err != nil {
+		t.Fatalf("SetDeviceConfig() error: %v", err)
+	}
+	if err := storeBeforeRestart.Close(); err != nil {
+		t.Fatalf("Close() error: %v", err)
+	}
+
+	// Reopen store to simulate driver restart.
+	storeAfterRestart, err := NewBoltPodConfigStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewBoltPodConfigStore() after restart error: %v", err)
+	}
+	defer storeAfterRestart.Close()
+
+	np := &NetworkDriver{
+		podConfigStore: storeAfterRestart,
+		netdb:          inventory.New(),
+	}
+	pod := &api.PodSandbox{
+		Uid:       string(podUID),
+		Name:      "test-pod-sandbox",
+		Namespace: "test-ns",
+		Linux: &api.LinuxPodSandbox{
+			Namespaces: []*api.LinuxNamespace{
+				{Type: "network", Path: "/var/run/netns/test"},
+			},
+		},
+	}
+
+	// RunPodSandbox should find the persisted config and attempt netdev
+	// operations, which will fail (no real interface). An error proves the
+	// config was found — a nil return would mean the config was missing.
+	err = np.RunPodSandbox(context.Background(), pod)
+	if err == nil {
+		t.Fatal("expected RunPodSandbox to error (config found, netdev ops fail), got nil (config missing?)")
+	}
+}
+
 func TestCreateContainerMetrics(t *testing.T) {
 	testCases := []struct {
 		name           string
-		podConfigStore *PodConfigStore
+		podConfigStore podConfigStorer
 		expectSuccess  bool
 	}{
 		{
@@ -142,7 +248,7 @@ func TestRunPodSandboxMetrics(t *testing.T) {
 
 	testCases := []struct {
 		name           string
-		podConfigStore *PodConfigStore
+		podConfigStore podConfigStorer
 		pod            *api.PodSandbox
 		expectSuccess  bool
 	}{
@@ -238,7 +344,7 @@ func TestRunPodSandboxMetrics(t *testing.T) {
 func TestStopPodSandboxMetrics(t *testing.T) {
 	testCases := []struct {
 		name           string
-		podConfigStore *PodConfigStore
+		podConfigStore podConfigStorer
 		expectSuccess  bool
 	}{
 		{
@@ -305,7 +411,7 @@ func TestStopPodSandboxMetrics(t *testing.T) {
 func TestRemovePodSandboxMetrics(t *testing.T) {
 	testCases := []struct {
 		name           string
-		podConfigStore *PodConfigStore
+		podConfigStore podConfigStorer
 		expectSuccess  bool
 	}{
 		{

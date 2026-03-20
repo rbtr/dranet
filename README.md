@@ -95,6 +95,15 @@ Install the latest stable version of DRANET using the provided manifest:
 kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/dranet/refs/heads/main/install.yaml
 ```
 
+DRANET persists prepared pod device configuration in a local bbolt database so
+NRI hooks can continue initialization after a driver restart. The default DB
+path is `/var/run/dranet/dranet.db`, so deployment manifests must mount
+`/var/run/dranet` as writable storage (hostPath with `DirectoryOrCreate` in the
+provided manifests).
+
+You can override the DB path with `--db-path`; set it to an empty
+string to disable persistence and use in-memory state.
+
 ### How to Use It
 
 Once DRANET is running, you can inspect the network interfaces and their
