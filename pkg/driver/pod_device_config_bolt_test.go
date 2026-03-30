@@ -308,6 +308,37 @@ func TestBoltPodConfigStore_ThreadSafety(t *testing.T) {
 	wg.Wait()
 }
 
+func TestBoltPodConfigStore_ListPods(t *testing.T) {
+	store := newTestBoltStore(t)
+
+	// Empty store.
+	if uids := store.ListPods(); len(uids) != 0 {
+		t.Errorf("expected 0 pods, got %d", len(uids))
+	}
+
+	store.SetDeviceConfig("pod-a", "eth0", DeviceConfig{}) //nolint:errcheck
+	store.SetDeviceConfig("pod-b", "eth0", DeviceConfig{}) //nolint:errcheck
+	store.SetDeviceConfig("pod-b", "eth1", DeviceConfig{}) //nolint:errcheck
+
+	uids := store.ListPods()
+	if len(uids) != 2 {
+		t.Fatalf("expected 2 pods, got %d", len(uids))
+	}
+	uidSet := map[types.UID]bool{}
+	for _, uid := range uids {
+		uidSet[uid] = true
+	}
+	if !uidSet["pod-a"] || !uidSet["pod-b"] {
+		t.Errorf("expected pod-a and pod-b, got %v", uids)
+	}
+
+	store.DeletePod("pod-a")
+	uids = store.ListPods()
+	if len(uids) != 1 || uids[0] != "pod-b" {
+		t.Errorf("after delete, expected [pod-b], got %v", uids)
+	}
+}
+
 func TestBoltPodConfigStore_Errors(t *testing.T) {
 	t.Run("creates missing parent directory", func(t *testing.T) {
 		dbPath := filepath.Join(t.TempDir(), "nested", "path", "test.db")

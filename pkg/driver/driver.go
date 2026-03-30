@@ -76,6 +76,7 @@ type podConfigStorer interface {
 	SetDeviceConfig(podUID types.UID, deviceName string, config DeviceConfig) error
 	GetDeviceConfig(podUID types.UID, deviceName string) (DeviceConfig, bool)
 	GetPodConfig(podUID types.UID) (PodConfig, bool)
+	ListPods() []types.UID
 	DeletePod(podUID types.UID)
 	DeleteClaim(claim types.NamespacedName) []types.UID
 	UpdateLastNRIActivity(podUID types.UID, timestamp time.Time)

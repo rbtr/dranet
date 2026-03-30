@@ -158,6 +158,17 @@ func (s *PodConfigStore) DeletePod(podUID types.UID) {
 	delete(s.configs, podUID)
 }
 
+// ListPods returns the UIDs of all pods in the store.
+func (s *PodConfigStore) ListPods() []types.UID {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	uids := make([]types.UID, 0, len(s.configs))
+	for uid := range s.configs {
+		uids = append(uids, uid)
+	}
+	return uids
+}
+
 // GetPodConfig retrieves all configurations for a given Pod UID.
 // It is indexed by the Pod's UID.
 func (s *PodConfigStore) GetPodConfig(podUID types.UID) (PodConfig, bool) {

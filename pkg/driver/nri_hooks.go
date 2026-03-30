@@ -42,15 +42,26 @@ func (np *NetworkDriver) Synchronize(_ context.Context, pods []*api.PodSandbox, 
 	klog.Infof("Synchronized state with the runtime (%d pods, %d containers)...",
 		len(pods), len(containers))
 
+	livePods := set.New[types.UID]()
 	for _, pod := range pods {
 		klog.Infof("Synchronize Pod %s/%s UID %s", pod.Namespace, pod.Name, pod.Uid)
 		klog.V(2).Infof("pod %s/%s: namespace=%s ips=%v", pod.GetNamespace(), pod.GetName(), getNetworkNamespace(pod), pod.GetIps())
+		livePods.Insert(types.UID(pod.Uid))
 		// get the pod network namespace
 		ns := getNetworkNamespace(pod)
 		// host network pods are skipped
 		if ns != "" {
 			// store the Pod metadata in the db
 			np.netdb.AddPodNetNs(podKey(pod), ns)
+		}
+	}
+
+	// Prune persisted configs for pods that no longer exist in the runtime.
+	// This handles the case where pods were deleted while the driver was down.
+	for _, storedUID := range np.podConfigStore.ListPods() {
+		if !livePods.Has(storedUID) {
+			klog.Infof("Synchronize: pruning stale config for pod %s", storedUID)
+			np.podConfigStore.DeletePod(storedUID)
 		}
 	}
 

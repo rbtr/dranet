@@ -171,6 +171,44 @@ func TestRunPodSandboxUsesPersistedConfigAfterRestart(t *testing.T) {
 	}
 }
 
+func TestSynchronizePrunesStaleConfigs(t *testing.T) {
+	store := NewPodConfigStore()
+	store.SetDeviceConfig("live-pod", "eth0", DeviceConfig{})   //nolint:errcheck
+	store.SetDeviceConfig("stale-pod", "eth0", DeviceConfig{})  //nolint:errcheck
+	store.SetDeviceConfig("stale-pod2", "eth0", DeviceConfig{}) //nolint:errcheck
+
+	np := &NetworkDriver{
+		podConfigStore: store,
+		netdb:          inventory.New(),
+	}
+
+	// Synchronize with only "live-pod" present in the runtime.
+	pods := []*api.PodSandbox{
+		{
+			Uid:       "live-pod",
+			Name:      "live",
+			Namespace: "default",
+			Linux:     &api.LinuxPodSandbox{},
+		},
+	}
+	_, err := np.Synchronize(context.Background(), pods, nil)
+	if err != nil {
+		t.Fatalf("Synchronize() error: %v", err)
+	}
+
+	// live-pod should still be in the store.
+	if _, found := store.GetPodConfig("live-pod"); !found {
+		t.Error("live-pod should still exist after sync")
+	}
+	// stale pods should be pruned.
+	if _, found := store.GetPodConfig("stale-pod"); found {
+		t.Error("stale-pod should have been pruned")
+	}
+	if _, found := store.GetPodConfig("stale-pod2"); found {
+		t.Error("stale-pod2 should have been pruned")
+	}
+}
+
 func TestCreateContainerMetrics(t *testing.T) {
 	testCases := []struct {
 		name           string

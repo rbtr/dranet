@@ -188,6 +188,28 @@ func (s *BoltPodConfigStore) DeletePod(podUID types.UID) {
 	s.mu.Unlock()
 }
 
+// ListPods returns the UIDs of all pods in the store.
+func (s *BoltPodConfigStore) ListPods() []types.UID {
+	var uids []types.UID
+	err := s.db.View(func(tx *bolt.Tx) error {
+		root := tx.Bucket(podConfigsBucket)
+		if root == nil {
+			return nil
+		}
+		return root.ForEach(func(k, v []byte) error {
+			if v == nil { // nested bucket = pod UID
+				uids = append(uids, types.UID(string(k)))
+			}
+			return nil
+		})
+	})
+	if err != nil {
+		klog.Errorf("BoltPodConfigStore: failed to list pods: %v", err)
+		return nil
+	}
+	return uids
+}
+
 func (s *BoltPodConfigStore) DeleteClaim(claim types.NamespacedName) []types.UID {
 	var podsToDelete []types.UID
 	err := s.db.View(func(tx *bolt.Tx) error {
