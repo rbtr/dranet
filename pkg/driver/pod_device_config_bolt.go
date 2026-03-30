@@ -25,6 +25,7 @@ import (
 	"time"
 
 	bolt "go.etcd.io/bbolt"
+	berrors "go.etcd.io/bbolt/errors"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog/v2"
 )
@@ -82,7 +83,7 @@ func (s *BoltPodConfigStore) SetDeviceConfig(podUID types.UID, deviceName string
 	return s.db.Update(func(tx *bolt.Tx) error {
 		root := tx.Bucket(podConfigsBucket)
 		if root == nil {
-			return bolt.ErrBucketNotFound
+			return berrors.ErrBucketNotFound
 		}
 		podBucket, err := root.CreateBucketIfNotExists([]byte(podUID))
 		if err != nil {
@@ -170,10 +171,10 @@ func (s *BoltPodConfigStore) DeletePod(podUID types.UID) {
 	err := s.db.Update(func(tx *bolt.Tx) error {
 		root := tx.Bucket(podConfigsBucket)
 		if root == nil {
-			return bolt.ErrBucketNotFound
+			return berrors.ErrBucketNotFound
 		}
 		err := root.DeleteBucket([]byte(podUID))
-		if err == bolt.ErrBucketNotFound {
+		if err == berrors.ErrBucketNotFound {
 			return nil // Pod already deleted or does not exist
 		}
 		return err
